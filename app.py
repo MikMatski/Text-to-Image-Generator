@@ -1,116 +1,161 @@
+# app.py
 
-
-# Import Libraries
 import streamlit as st
 import requests
-from dotenv import load_dotenv
-import os
-import io 
+import io
 import time
-import random # for random prompt selection
-from PIL import Image # Pillow (PIL) Image module
+import os
+from PIL import Image
+from dotenv import load_dotenv
 
-
-# --- API Setup --- Authorization
-API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-3.5-large-turbo"
+# Load the Hugging Face token from .env file
 load_dotenv()
 API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
+
+# Set up API URL and headers
+API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-3.5-large-turbo"
 headers = {"Authorization": f"Bearer {API_TOKEN}"}
 
-
-
-# --- Core Function to Query Model ---
-def query(payload, retries=5, delay=5): # Added retries and delay parameters
+# Function to send prompt to Hugging Face and get back image bytes
+def query(payload, retries=5, delay=5):
     for i in range(retries):
-      try:
-        start_time = time.time()  # Record the start time
-        response = requests.post(API_URL, headers=headers, json=payload)
-        response.raise_for_status() # Raise an exception for bad status codes
-        end_time = time.time()  # Record the end time
-        generation_time = end_time - start_time  # Calculate the generation time
-        print(f"Image generated in {generation_time:.2f} seconds")  # Print the time
-        return response.content # capture response from server
-      except requests.exceptions.RequestException as e:
-        if response.status_code != 200: # report failed executions
-          if response.status_code == 503 and i < retries - 1:
-            # If 503 and not the last retry, attempt retry after delay
-            print(f"Model loading... Retrying in {delay} seconds...")
-            time.sleep(delay) # Pause before retrying
-      else:
-        raise Exception(f"API request failed with status {response.status_code}: {response.text}")
+        try:
+            start_time = time.time()
+            response = requests.post(API_URL, headers=headers, json=payload)
+            response.raise_for_status()
+            st.success(f"Image generated in {time.time() - start_time:.2f} seconds")
+            return response.content
+        except requests.exceptions.RequestException as e:
+            if response.status_code == 503 and i < retries - 1:
+                st.warning(f"Model loading... Retrying in {delay} seconds...")
+                time.sleep(delay)
+            else:
+                raise e
 
-
-
-# --- Image Generation Function ---
-#function to generate an image based on the given text prompt
+# Convert image bytes to a PIL Image object
 def generate_image(prompt):
-  image_bytes = query({"inputs": prompt})
-  
-  # Check if the response looks like an image
-  try:
-      image = Image.open(io.BytesIO(image_bytes))
-      return image
-  except Exception as e:
-      print("Failed to identify image. Possibly received non-image content.")
-      print("Response preview (first 200 bytes):", image_bytes[:200])
-      raise e
+    image_bytes = query({"inputs": prompt})
+    try:
+        return Image.open(io.BytesIO(image_bytes))
+    except Exception as e:
+        st.error("Failed to convert response to image.")
+        st.text(image_bytes[:200])
+        raise e
 
-#prompt to add a specific style to the output
-style_prompt = "simple animation cartoon with a white outline utilizing earthy tones, yellow, and orange"
+# ------------------------
+# Set up the Streamlit page
+# ------------------------
+st.set_page_config(page_title="AI Image Generator", layout="centered")
+st.title("🎨 AI Image Generator")
 
+st.write("Choose a style and prompt to generate a custom AI image!")
 
+# -------------------
+# Define styles
+# -------------------
+style_prompts = {
+    "🖤 B/W Graphic Novel": "black-and-white animation sketch style with sharp marks",
+    "🍂 Earthy Cartoon": "simple animation cartoon with white outline, earthy tones, yellow, orange",
+    "🖌️ Watercolor": "watercolor painting with soft edges, natural brushstrokes, subtle gradients",
+    "📸 Photorealistic Render": "photorealistic render with sharp details and realistic lighting",
+    "🌈 Surreal Dreamscape": "surreal dreamlike scene with vibrant colors, impossible structures",
+    "🌌 Sci‑fi Concept Art": "futuristic sci-fi digital concept art with dramatic lighting and cool tones"
+}
 
-# --- Prompt Options ---
-# Example usage with random prompt selection
+# ---------------------------
+# Session State Initialization
+# ---------------------------
+if "selected_style" not in st.session_state:
+    st.session_state.selected_style = list(style_prompts.keys())[0]
+
+if "user_prompt" not in st.session_state:
+    st.session_state.user_prompt = ""
+
+if "generated_image" not in st.session_state:
+    st.session_state.generated_image = None
+
+if "caption" not in st.session_state:
+    st.session_state.caption = ""
+
+# -------------------
+# Style selection
+# -------------------
+st.markdown("**🎨 Choose a style:**")
+style_cols = st.columns(3)
+for i, label in enumerate(style_prompts.keys()):
+    if style_cols[i % 3].button(label):
+        st.session_state.selected_style = label  # Remember the selection
+
+# Show the currently selected style
+st.info(f"Current style: {st.session_state.selected_style}")
+
+# -------------------
+# Prompt Entry
+# -------------------
 example_prompts = [
-    "of a whale leaping over the moon",
+    "a whale leaping over the moon",
     "a majestic lion with a flowing mane, digital art",
-    "landscape with a waterfall and mountains, fantasy art",
+    "a landscape with a waterfall and mountains, fantasy art",
     "a princess watching a cruise ship in the distance, fantasy art",
-    "colforful frosted cupcake sitting on a bakery counter"
+    "a colorful frosted cupcake sitting on a bakery counter",
+    "beagle and a duck sitting by a picnic basket"
 ]
 
-# Randomly select a prompt from the list
-selected_prompt = style_prompt + " of " + random.choice(example_prompts)
-print(f"Selected prompt: {selected_prompt}")  # Print the selected prompt
+prompt_options = example_prompts + ["Custom..."]
+selected_prompt_option = st.selectbox(
+    "📝 Select an example prompt or choose 'Custom...'",
+    options=prompt_options,
+    index=0
+)
 
-image = generate_image(selected_prompt)
-
-# For local development and testing, dispaly image
-#if image:
-#  image.show() # Display the image (within an external window using system's default image viewer)
-#else:
-#  print("Failed to generate or load image.")
-
-
-
-# --- Streamlit UI ---
-st.title("🖼️ AI Image Generator (via Hugging Face)")
-st.write("Generate AI images with a predefined artistic style using Stable Diffusion.")
-
-# Prompt input options
-prompt_choice = st.selectbox("Choose a prompt or type your own:", ["🔀 Random"] + example_prompts)
-custom_prompt = st.text_input("Or write your own idea:")
-
-if prompt_choice == "🔀 Random":
-    base_prompt = random.choice(example_prompts)
-elif prompt_choice:
-    base_prompt = prompt_choice
+# Show text box if "Custom..." is selected
+if selected_prompt_option == "Custom...":
+    st.session_state.user_prompt = st.text_input(
+        "✏️ Enter your custom prompt:",
+        value=st.session_state.user_prompt
+    )
 else:
-    base_prompt = ""
+    st.session_state.user_prompt = selected_prompt_option
 
-# Final combined prompt (style + user prompt)
-core_prompt = custom_prompt if custom_prompt else base_prompt
-final_prompt = style_prompt + " " + core_prompt
-
-if st.button("🎨 Generate Image"):
-    if core_prompt.strip():
-        st.info(f"Generating: **{core_prompt}**")
+# -------------------
+# Generate Image Button
+# -------------------
+if st.button("🚀 Generate Image"):
+    prompt_text = st.session_state.user_prompt.strip()
+    if not prompt_text:
+        st.warning("Please enter a prompt first.")
+    else:
+        full_prompt = f"{style_prompts[st.session_state.selected_style]} of {prompt_text}"
         with st.spinner("Generating image..."):
             try:
-                image = generate_image(final_prompt)
-                st.image(image, caption=core_prompt)
+                # Save image and caption in session_state so it persists
+                img = generate_image(full_prompt)
+                st.session_state.generated_image = img
+                st.session_state.caption = f"{prompt_text} — {st.session_state.selected_style}"
             except Exception as e:
-                st.error(f"Generation failed: {e}")
-    else:
-        st.warning("Please select or enter a prompt.")
+                st.error(f"Image generation failed: {e}")
+
+# -------------------
+# Display Generated Image (if available)
+# -------------------
+if st.session_state.generated_image:
+    st.image(
+        st.session_state.generated_image,
+        caption=st.session_state.caption,
+        use_column_width=True
+    )
+
+    # -------------------
+    # Add Download Button
+    # -------------------
+    # Convert image to bytes in memory
+    buffer = io.BytesIO()
+    st.session_state.generated_image.save(buffer, format="PNG")
+    img_bytes = buffer.getvalue()
+
+    st.download_button(
+        label="⬇️ Download Image",
+        data=img_bytes,
+        file_name="generated_image.png",
+        mime="image/png"
+    )
